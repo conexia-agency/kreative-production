@@ -343,6 +343,10 @@ def commande_audit(marque: str, format_json: bool, bloquant: bool) -> int:
                          ensure_ascii=False, indent=1))
     else:
         print(audit.rapport(constats, bloquant=bloquant))
+    # La trace que parcours.py lit pour savoir que l'audit est passé sur les
+    # masters présents. La même que celle d'audit.py.
+    commande.tracer("audit", echecs=sum(1 for x in constats if x.bloquant),
+                    controles=len(constats), bloquant=bloquant)
     return 1 if bloquant and any(x.bloquant for x in constats) else 0
 
 
@@ -413,16 +417,11 @@ def commande_verifier() -> int:
         controle(False, "playwright + chromium", "",
                  "pip3 install playwright && python3 -m playwright install chromium")
 
-    # 3. Tesseract, avec le français et l'anglais.
-    tess = shutil.which("tesseract")
-    if tess:
-        langues = subprocess.run([tess, "--list-langs"], capture_output=True,
-                                 text=True).stdout
-        manque = [l for l in ("fra", "eng") if l not in langues.split()]
-        controle(not manque, "tesseract fra+eng", tess,
-                 f"langues manquantes {manque} : brew install tesseract-lang")
-    else:
-        controle(False, "tesseract fra+eng", "", "brew install tesseract tesseract-lang")
+    # 3. La relecture des visuels ne demande plus rien à installer depuis le
+    # 21/09 : loupe.py découpe les masters, la session lit et juge, relecture.py
+    # consigne le verdict. Tesseract a été retiré de la chaîne, il rendait une
+    # bulle noire sur violet vide et inventait des mots sur du texte incliné.
+    controle(True, "relecture des visuels", "loupe.py + relecture.py, aucun moteur à installer", "")
 
     # 4. Le MCP Higgsfield dans la configuration Claude Code.
     config = Path.home() / ".claude.json"
@@ -490,6 +489,43 @@ def commande_verifier() -> int:
     return 0
 
 
+def commande_atelier(marque: str, ouvrir: bool = False) -> int:
+    """Galerie visuelle type Cowork pour juger planches, refs et masters."""
+    import atelier as module_atelier
+    from etat import Commande
+    try:
+        commande = Commande.charger(marque)
+    except FileNotFoundError as err:
+        print(f"Erreur : {err}")
+        return 1
+    chemin = module_atelier.ecrire(commande, ouvrir=ouvrir)
+    inv = module_atelier.collecter(commande)
+    print(f"Atelier : {chemin}")
+    print(
+        f"  planches {len(inv['planches'])} · refs {len(inv['refs'])} · "
+        f"captures {len(inv['captures'])} · assets {len(inv['assets'])} · "
+        f"masters {len(inv['masters'])}"
+    )
+    return 0
+
+
+def commande_parcours(marque: str, exiger=None) -> int:
+    """Délègue à pipeline/parcours.py : une seule prochaine étape."""
+    import parcours as module_parcours
+    from etat import Commande
+    try:
+        commande = Commande.charger(marque)
+    except FileNotFoundError as err:
+        print(f"Erreur : {err}")
+        return 1
+    if exiger:
+        return module_parcours.exiger(commande, exiger)
+    inv = module_parcours.inventaire(commande)
+    code, titre, cmds = module_parcours.etape_suivante(inv)
+    print(module_parcours.formater(inv, code, titre, cmds))
+    return 0
+
+
 def main() -> int:
     parseur = argparse.ArgumentParser(
         description="Chaîne de production Kreative",
@@ -541,6 +577,16 @@ def main() -> int:
     p = sous.add_parser("page", help="Produire la page de suivi")
     p.add_argument("marque")
 
+    p = sous.add_parser("parcours", help="Seule prochaine étape autorisée (disque)")
+    p.add_argument("marque")
+    p.add_argument("--exiger", choices=["strategie", "plan", "generer", "audit",
+                                        "formats", "livrer"],
+                   help="Gate : rend 1 si l'étape n'est pas encore autorisée")
+
+    p = sous.add_parser("atelier", help="Galerie visuelle type Cowork (planches/refs/masters)")
+    p.add_argument("marque")
+    p.add_argument("--ouvrir", action="store_true", help="Ouvrir dans le navigateur")
+
     sous.add_parser("verifier", help="Contrôler les prérequis du poste, un par un")
 
     a = parseur.parse_args()
@@ -565,6 +611,10 @@ def main() -> int:
             return commande_etat(a.marque)
         if a.action == "page":
             return commande_page(a.marque)
+        if a.action == "parcours":
+            return commande_parcours(a.marque, getattr(a, "exiger", None))
+        if a.action == "atelier":
+            return commande_atelier(a.marque, getattr(a, "ouvrir", False))
         if a.action == "verifier":
             return commande_verifier()
     except FileNotFoundError as erreur:

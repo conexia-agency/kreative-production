@@ -68,7 +68,7 @@ AGENT = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
 
 EXTENSIONS_IGNOREES = (".pdf", ".zip", ".mp4", ".mov", ".webm", ".mp3", ".doc", ".docx",
                        ".xls", ".xlsx", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".ico")
-# Pages sans matière pour une créa. Mesuré sur client D : sans ce filtre,
+# Pages sans matière pour une créa. Mesuré sur le client D : sans ce filtre,
 # 5 pages sur 12 partaient sur les cookies, les mentions légales, la
 # confidentialité, le recrutement et un remerciement, et le capital social des
 # mentions légales ressortait comme un « prix » à 10 059 500 €.
@@ -356,7 +356,7 @@ LECTURE_PAGE = r"""
     return { couleur, dx, dy, flou, etalement, nature: lueur ? 'lueur' : 'ombre portée' };
   };
   // La couleur du TEXTE, lue sur l'élément qui le porte vraiment. Un badge est
-  // souvent un conteneur dont la couleur est héritée et fausse : client B
+  // souvent un conteneur dont la couleur est héritée et fausse : le client B
   // ressortait « encre noire sur fond rgb(38,36,41) », c'est-à-dire du noir sur
   // du noir, ce qui n'existe pas à l'écran. Une valeur fausse dans une charte
   // est pire qu'une valeur absente : elle se retrouve telle quelle dans un
@@ -390,7 +390,7 @@ LECTURE_PAGE = r"""
 
     // Badge ou pilule : petit, très arrondi, fond plein, texte court.
     // Un badge porte UN texte court sur une ligne. Le retour à la ligne
-    // trahit un conteneur qui empile deux blocs : client B sortait « À l'unité
+    // trahit un conteneur qui empile deux blocs : le client B sortait « À l'unité
     // / Nos packs » comme un seul badge de 160px de rayon.
     if (texte && texte.length <= 32 && !texte.includes('\n')
         && r.height >= 14 && r.height <= 60
@@ -1074,7 +1074,7 @@ def aspirer(url: str, sortie: Path, pages_max: int = PAGES_MAX_DEFAUT) -> dict:
                 _verifier_page_de_garde(lecture, reponse.status if reponse else 0)
 
             # JPEG et non PNG : ces captures servent à lire la DA à l'oeil, pas à
-            # être découpées. Mesuré sur client D, une page pleine pèse
+            # être découpées. Mesuré sur le client D, une page pleine pèse
             # 2,8 Mo en PNG, soit 69 Mo par client et 1,4 Go sur les 21 commandes
             # ouvertes. Le JPEG de qualité 82 rend la même lecture pour un huitième.
             slug = _slug(page.url)
@@ -1195,7 +1195,7 @@ def aspirer(url: str, sortie: Path, pages_max: int = PAGES_MAX_DEFAUT) -> dict:
                 # jamais sur le naturalWidth du navigateur : une image affichée
                 # en petit (logo de pied de page, image paresseuse) est notée
                 # minuscule alors que le fichier est en pleine résolution, et le
-                # tri par taille l'écartait à tort. Mesuré sur client B : le logo
+                # tri par taille l'écartait à tort. Mesuré sur le client B : le logo
                 # blanc 3667 x 1184 était indexé 223 x 72 et n'a jamais été vu.
                 largeur, hauteur = image.get("largeur") or 0, image.get("hauteur") or 0
                 if extension != ".svg":
@@ -1252,7 +1252,7 @@ def aspirer(url: str, sortie: Path, pages_max: int = PAGES_MAX_DEFAUT) -> dict:
     logos.sort(key=lambda l: -l["score"])
 
     # La plupart des créas se composent sur fond clair. Un site qui ne sert son
-    # logo qu'en blanc sur transparent, cas client D, n'en offre donc
+    # logo qu'en blanc sur transparent, cas du client D, n'en offre donc
     # aucun d'utilisable : posé tel quel il disparaît. On le dit ici, pendant
     # qu'on peut encore aller chercher la version foncée, plutôt que de le
     # découvrir sur une planche livrée.

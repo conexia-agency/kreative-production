@@ -1,21 +1,35 @@
 ---
 name: kreative-production
-description: Pilote la chaîne de production Kreative de bout en bout, du formulaire client rempli jusqu'aux créatives Meta auditées et déposées en revue. À utiliser quand un nouveau formulaire arrive, quand l'utilisateur demande de relever les commandes, de produire ou régénérer un pack de créas pour un client, ou nomme une commande existante par sa marque. Couvre le relevé Zite, l'aspiration du site, la stratégie créative, le devis en crédits, la génération par le MCP Higgsfield, le gate qualité et la page de suivi. Ne pas utiliser pour créer une vidéo, ni pour un client hors Kreative, ni pour modifier la plateforme de revue elle-même.
+description: Pilote la chaîne de production Kreative de bout en bout, du formulaire client rempli jusqu'au pack livré en trois formats. À utiliser quand un nouveau formulaire arrive, quand l'utilisateur demande de relever les commandes, de produire, reprendre ou livrer un pack de créas pour un client, ou nomme une commande existante par sa marque. Couvre le relevé Zite, l'aspiration du site, la banque de références, la stratégie et la copy, le devis en crédits, la génération par le MCP Higgsfield, la relecture au zoom, l'audit, les formats 1:1, 4:5 et 9:16, la livraison et la revue. Ne pas utiliser pour créer une vidéo, ni pour un client hors Kreative, ni pour modifier la plateforme de revue elle-même.
 ---
 
 # Production Kreative
 
 La chaîne complète : un formulaire rempli entre, un pack de créatives Meta
-auditées sort, et personne n'intervient entre les deux sauf trois arrêts
-prévus. Tout se fait en **français**, accents compris.
+livré en trois formats sort, et personne n'intervient entre les deux sauf trois
+arrêts prévus. Tout se fait en **français**, accents compris.
+
+**Comment elle s'actionne.** Une seule boucle, jusqu'au bout :
+
+```
+python3 scripts/pipeline/parcours.py suivant <ardoise>
+```
+
+Le parcours lit le disque et donne LA prochaine action. Tu l'exécutes, tu
+relances `parcours.py suivant`, et ainsi de suite jusqu'à l'étape `livree`.
+Tu ne sautes aucune étape et tu n'en inventes aucune : ce que le parcours ne
+propose pas n'est pas encore autorisé. Ce skill tourne dans une session Claude
+Code, pas dans un cron : lire les images, écrire les prompts et juger les
+masters demandent une session.
 
 ## Objectif
 
 Kreative vend des packs de créatives statiques Meta. Ce skill orchestre leur
 production : relever les formulaires, construire le dossier client, aspirer le
-site, écrire la stratégie et les prompts, chiffrer, générer par le MCP
-Higgsfield, auditer, montrer. Résultat attendu : des masters 1:1 au texte
-peint, gate franchi, page de suivi ouverte, coût réel journalisé.
+site, écrire la stratégie, la copy et les prompts, chiffrer, générer par le
+MCP Higgsfield, relire, auditer, décliner, livrer. Résultat attendu : chaque
+créa en 1:1, 4:5 et 9:16 au texte peint, relue au zoom, audit franchi, dossier
+de remise créé et notifié, coût réel journalisé.
 
 ## Quand utiliser ce skill
 
@@ -39,6 +53,7 @@ set -a && source .env && set +a               # les clés, jamais en clair
 python3 scripts/kreative.py verifier          # 9 contrôles, tout doit être OK
 python3 scripts/pipeline/zite.py relever      # les nouveaux formulaires
 python3 scripts/kreative.py etat <ardoise>    # où en est une commande
+python3 scripts/pipeline/parcours.py suivant <ardoise>   # LA prochaine action
 ```
 
 ## Règles d'or
@@ -47,31 +62,45 @@ python3 scripts/kreative.py etat <ardoise>    # où en est une commande
    indéductible, site inexploitable (motif écrit dans `marque/scraping.json`),
    devis au-dessus du plafond (120 crédits par défaut). Tout le reste se
    tranche, se fait, et se signale en fin de sortie dans « Ce qui a manqué ».
-2. **Le skill créatif se lit EN ENTIER avant la première stratégie.**
-   `references/strategie-creative.md` se lit en une seule lecture, du début à
-   la fin, avant d'écrire la moindre ligne de stratégie : c'est lui le métier,
-   pas ce fichier-ci. Les captures de `marque/captures/` se REGARDENT (outil
-   Read), la banque de références s'ouvre sous registre (`banque.py`), et la
-   sortie passe par `plan.py importer`. Rien de tout cela n'est optionnel :
-   `moteur.py preparer` REFUSE un plan qui n'est pas passé par l'import, et
-   l'import refuse un plan écrit sans avoir ouvert la banque.
-3. **La génération passe par le MCP Higgsfield, uniquement.** Jamais la CLI,
+2. **Le disque pilote l'ordre : `parcours.py suivant` d'abord (mode Cowork).**
+   Avant toute stratégie ou génération :
+   `python3 scripts/pipeline/parcours.py suivant <ardoise>`.
+   `exiger --avant strategie|generer` refuse si la banque n'est pas ouverte,
+   lue, retenue, extraite et absorbée. Puis : ouvrir
+   `python3 scripts/pipeline/atelier.py <ardoise> --ouvrir`, **Read** les
+   images (planches, refs, captures), lire `references/strategie-creative.md`
+   EN ENTIER, ecrire le plan creatif (concepts distincts, pas un script
+   packshot), `plan.py importer`. Claude juge les images ; l'humain tranche.
+   Contourner = pack generique.
+3. **Chaque créa part de la structure d'une référence absorbée.** Les créas
+   de la banque sont des structures qui ont déjà performé : on reprend
+   l'emplacement des zones (titre, produit, preuve, CTA), leurs proportions,
+   le type de fond, le rapport texte/image, la présence ou l'absence de
+   bouton. On ne reprend jamais la copy, les couleurs, les polices ni les
+   produits de la référence. Chaque créa du plan porte un champ `structure`
+   avec l'identifiant de cette référence (`"structure": "EC1-07"`) ;
+   `plan.py importer` refuse une créa sans lui. Le prompt décrit la structure
+   zone par zone et ne cite jamais l'identifiant.
+4. **La copy est écrite par la session**, dans le ton et le tu/vous du
+   client, selon les règles de longueur de `references/strategie-creative.md`.
+   Tout chiffre vient du brief ou du site.
+5. **La génération passe par le MCP Higgsfield, uniquement.** Jamais la CLI,
    jamais une API directe. Le protocole d'appel est
    décrit dans `references/chaine-kreative.md`.
-4. **Les fichiers locaux font foi.** L'état d'une commande est
+6. **Les fichiers locaux font foi.** L'état d'une commande est
    `commandes/<ardoise>/commande.json` et ses créas ; la plateforme de revue
    n'est qu'une projection. Un doute se lève en lisant le disque, pas en
    se souvenant.
-5. **Le devis se valide avant de générer.** `preparer` écrit le lot et son
+7. **Le devis se valide avant de générer.** `preparer` écrit le lot et son
    coût au tarif mesuré (`scripts/pipeline/couts.py`) ; au-dessus du plafond,
    c'est un arrêt. Le solde se relève avant et après chaque lot, et
    `recolter` journalise l'écart : c'est ce qui garde la table juste.
-6. **Un prompt est un champ de fichier, jamais une chaîne assemblée au vol.**
+8. **Un prompt est un champ de fichier, jamais une chaîne assemblée au vol.**
    Ce que `prompts` affiche est ce qui part au modèle, à l'octet près.
-7. **Aucun secret ne s'écrit** dans un fichier livrable, un commit ou une
+9. **Aucun secret ne s'écrit** dans un fichier livrable, un commit ou une
    sortie : les clés vivent dans le `.env` de l'espace de travail et se
    référencent par leur nom.
-8. **Zéro tiret cadratin, zéro emoji** dans tout ce qui est produit.
+10. **Zéro tiret cadratin, zéro emoji** dans tout ce qui est produit.
 
 ## Workflow
 
@@ -79,6 +108,10 @@ python3 scripts/kreative.py etat <ardoise>    # où en est une commande
 `python3 scripts/kreative.py verifier`. Chaque ligne dit ce qui est branché,
 ce qui manque et le remède (détail : `references/installation.md`). Verdict
 « ne doit pas tourner » : on répare, on ne contourne pas.
+
+0. **À chaque reprise d'une commande :**
+   `python3 scripts/pipeline/parcours.py suivant <ardoise>`  -  une seule
+   prochaine action, décidée par le disque. Ne pas sauter à la stratégie.
 
 1. **Relever et ouvrir.** `python3 scripts/pipeline/zite.py relever` simule et
    affiche ce qui arriverait ; avec `--appliquer`, il range chaque soumission
@@ -99,31 +132,47 @@ ce qui manque et le remède (détail : `references/installation.md`). Verdict
    ANALYSER réellement : ouvrir le site avec le MCP Chrome DevTools, pages
    produit et FAQ comprises, déplier avant de capturer, relever la DA avec
    `evaluate_script`, puis tenter la bibliothèque publicitaire Meta (non
-   bloquante : deux essais, on le dit en une ligne, on poursuit). Navigateur
-   indisponible : travailler sur les captures est permis, mais cela se dit à
-   l'utilisateur au moment où cela arrive. Le MCP Chrome ne lit jamais des
+   bloquante : deux essais, on le dit en une ligne, on poursuit). La tentative
+   se consigne, quelle qu'en soit l'issue, avec
+   `python3 scripts/pipeline/metaads.py consigner <ardoise> --statut
+   releve|aucune|echec` : les captures dans `marque/meta-ads/`, une note sur
+   le registre et les angles déjà tournés, ou le motif de l'échec. Le parcours
+   et `plan.py importer` exigent cette trace avant le premier plan ; un échec
+   motivé passe, l'absence de tentative non. **Navigateur indisponible : le
+   run s'arrête** (étape 0 du skill). Le parcours propose d'abord l'étape
+   `outillage` : `navigate_page` vers le site, `take_screenshot` enregistré
+   dans `marque/navigateur/`, puis `python3 scripts/pipeline/outillage.py
+   consigner <ardoise> --navigateur ok --capture <chemin>`. S'il ne répond
+   pas : `--navigateur indisponible --motif "..."`, et le parcours s'arrête
+   sur `interrompu`. Le MCP Chrome ne lit jamais des
    fichiers locaux. Si le site refuse le scraping, le motif est écrit dans
    `marque/scraping.json` : c'est l'arrêt 2 si le brief seul ne porte pas
    la DA.
-3. **Ouvrir la banque de références, sous registre.**
-   `python3 scripts/pipeline/banque.py ouvrir <ardoise>` liste la famille et
-   les planches. Ouvrir TOUTES les planches listées (outil Read), puis
-   consigner : `banque.py lue <ardoise> --planches ...`, retenir les
-   références en pleine résolution `banque.py retenir <ardoise> --refs ...
-   --du-client ...`, et `banque.py extraire <ardoise>` : une image par
-   référence retenue (les fichiers HD portent deux créas côte à côte, les
-   lire tels quels partage la résolution). Ouvrir les fichiers découpés UN
-   PAR UN : c'est là que se lit la finition, pas sur les planches. Sans ce
-   registre, le plan sera refusé à l'étape 4.
-4. **La stratégie.** Lire d'abord `references/strategie-creative.md` EN
-   ENTIER (règle d'or 2), puis l'appliquer jusqu'aux prompts finalisés, dans
-   son format de sortie, écrit dans UN fichier markdown. Ranger ensuite ce
-   plan : `python3 scripts/pipeline/plan.py importer <ardoise> --fichier
-   <plan.md>`. C'est l'import qui fait tourner les gates (banque ouverte et
-   retenue, copy dans le prompt, zéro tiret cadratin) ; un refus cite la
-   règle du skill en cause, on reprend la créa, jamais le contournement. On
-   n'écrit JAMAIS `creas/` à la main. Relecture :
-   `python3 scripts/kreative.py prompts <ardoise>`.
+3. **Ouvrir la banque de références, sous registre (et l'absorber).**
+   Suivre `parcours.py suivant` : `banque.py ouvrir` liste la famille et les
+   planches. Ouvrir TOUTES les planches (outil Read), puis `lue`, `retenir`,
+   `extraire`. Ensuite, pour CHAQUE `session/references/<ref>.jpg` : Read le
+   fichier, puis
+   `banque.py absorber <ardoise> --ref <id> --vu "une phrase layout/fond/texte"`.
+   Sans absorption, `verifier` / `plan.py importer` / `moteur.py preparer`
+   refusent. La banque nourrit le pack **globalement** : on n'agrafe pas une
+   référence par visuel pour la décalquer. Mais chaque créa part bien de la
+   structure d'une référence absorbée (règle d'or 3) : « globalement »
+   n'autorise pas à inventer une mise en page.
+4. **La stratégie (écriture Cowork, pas un script).** Ouvrir
+   `atelier.py <ardoise> --ouvrir`. Read les refs absorbees et captures.
+   Lire `references/strategie-creative.md` EN ENTIER. Ecrire le plan au
+   format skill : chaque crea = concept distinct (hero, lifestyle, avis,
+   comparaison, native/ugly si pertinent), posé sur la structure d'une
+   référence absorbée. Chaque créa du plan porte `structure`, `point_focal`,
+   `fond` et `tests` (`rarete`, `lecture_muette`, `micro_question`), et sa copy
+   figure mot pour mot dans son prompt. Interdit : plan generique
+   packshot+CTA. Puis
+   `python3 scripts/pipeline/plan.py importer <ardoise> --fichier <plan.json>`.
+   Un refus cite la règle enfreinte : on corrige et on réimporte.
+   Jamais ecrire `creas/` a la main. Relecture :
+   `python3 scripts/kreative.py prompts <ardoise>`. Regenerer l'atelier
+   apres les masters pour juger en grand.
 5. **Chiffrer et décider.** `python3 scripts/pipeline/moteur.py preparer
    <ardoise>` écrit le lot dans `jobs/` avec son devis. Il REFUSE un plan qui
    n'est pas passé par `plan.py importer` ou une banque sans registre : c'est
@@ -136,22 +185,58 @@ ce qui manque et le remède (détail : `references/installation.md`). Verdict
    `references/chaine-kreative.md`.
 7. **Récolter.** `python3 scripts/pipeline/moteur.py recolter <ardoise>
    --resultats <fichier.json> --solde-avant X --solde-apres Y` range les
-   masters et journalise le coût réel.
-8. **Auditer et relire.** `python3 scripts/kreative.py audit <ardoise>` : le
-   gate lit les images (texte peint contre copy, par OCR). Un échec bloque ;
-   une alerte se vérifie À L'ŒIL sur le master en pleine résolution avant
-   toute conclusion, l'OCR se trompe sur le petit texte. Pour cette
-   relecture : `python3 scripts/pipeline/loupe.py <ardoise>` découpe chaque
-   master en quatre zones qui se recouvrent, dans `session/loupe/`. Ouvrir
-   chaque zone une par une : un texte peint ne se juge jamais sur la vignette
-   entière, toutes les fautes se voient au zoom.
+   masters et journalise le coût réel. Chaque entrée du fichier de résultats
+   porte `crea`, `fichier`, **`job_id`** et **`references_jointes`**, la liste
+   des fichiers réellement passés en référence à l'appel. Les deux derniers
+   sont obligatoires et le master est refusé sans eux, avec contrôle de parité
+   contre les références demandées. Sans cette trace, une photo client repeinte
+   n'est attribuable ni au modèle ni à la jointure, et le défaut se reproduit
+   au pack suivant.
+8. **Relire, puis auditer.** Dans cet ordre : l'audit ne lit plus les images,
+   c'est toi qui lis. `python3 scripts/pipeline/loupe.py <ardoise>` découpe
+   chaque master en quatre zones qui se recouvrent, dans `session/loupe/`.
+   Ouvre chaque zone une par une avec Read : un texte peint ne se juge jamais
+   sur la vignette entière, toutes les fautes se voient au zoom. Tu ne
+   transcris pas, tu juges : une police peinte devant un nom, un mot de
+   liaison peint dans une pastille, une étiquette réinventée hors catalogue
+   sont des fautes qu'aucune comparaison de mots ne voit. Puis consigne, par
+   créa : `python3 scripts/pipeline/relecture.py verdict <ardoise> <crea>
+   --etat ok|refus --constat "ce qui a été lu, et sur quelle zone"`. Enfin
+   `python3 scripts/kreative.py audit <ardoise>` : C1 échoue sur toute créa
+   sans verdict, ou dont le master a été régénéré depuis son verdict.
+   Une créa refusée : `python3 scripts/pipeline/etat.py reprise-visuel
+   --marque <ardoise> --crea <id>`, corriger la cause du refus dans le prompt
+   (pas un nouveau tirage au sort), réimporter, regénérer, relire. Le parcours
+   y ramène tout seul (étape `reprendre`).
 9. **Montrer.** `python3 scripts/kreative.py page <ardoise>` écrit la page de
    suivi ; les masters restent dans `commandes/<ardoise>/masters/`.
-10. **Publier en revue, étape FACULTATIVE** : à sauter si les accès `PUBLIE_*` ne sont pas posés, le pack est déjà livré au complet par l'étape 9. Si la plateforme est branchée sur le poste :
-    `python3 scripts/pipeline/publier.py <ardoise> --dry-run` puis sans
-    `--dry-run`. Les commentaires de l'équipe redescendent avec
-    `python3 scripts/pipeline/retours.py <ardoise>`, et chaque reprise se
-    range dans `reprises/` sans rien écraser.
+10. **Décliner.** `python3 scripts/kreative.py formats <ardoise>` tire le 4:5
+    et le 9:16 de chaque master carré en ajoutant du cadre, sans toucher au
+    carré. Quand le bord du master n'est pas uniforme, prolonger ferait des
+    traînées : la créa part dans `formats/a-etendre.json` et le parcours
+    propose `formats_etendre`. Chiffrer d'abord (`outpaint_image` avec
+    `get_cost`), puis étendre par le MCP (haut et bas seulement), puis
+    `python3 scripts/pipeline/formats.py ranger-extension <ardoise> --crea
+    <id> --format 4x5|9x16 --fichier <image>` et
+    `python3 scripts/pipeline/formats.py verifier <ardoise>`.
+11. **Livrer.** `python3 scripts/kreative.py livrer <ardoise>` construit le
+    dossier de remise hors de l'espace de travail (`KREATIVE_LIVRAISONS`,
+    défaut `~/Kreative/livraisons`), fichiers nommés pour un humain, et
+    notifie (webhook `KREATIVE_NOTIF_WEBHOOK`, sinon une note dans le dossier).
+    Le pack est livré : le parcours passe à `livree`. Juste avant, le parcours
+   propose `sortie` : `python3 scripts/pipeline/sortie.py assembler
+   <ardoise>` assemble le « Format de sortie » de
+   `references/strategie-creative.md` (synthèse, angles, créatives et
+   prompts, garde-fous) ; il part dans le dossier de remise sous
+   `STRATEGIE-ET-PROMPTS.md`. La synthèse doit donc porter une section
+   « Garde-fous » cochée et une section « Couverture du brief » qui cite
+   chaque champ du formulaire.
+12. **Publier en revue, étape FACULTATIVE.** Le parcours ne la propose que si
+    les cinq accès `PUBLIE_*` sont posés. Alors :
+    `python3 scripts/pipeline/publier.py <ardoise> --client <slug> --dry-run`
+    puis sans `--dry-run`. Les commentaires de l'équipe redescendent avec
+    `python3 scripts/pipeline/retours.py <ardoise> --client <slug>`, et chaque
+    reprise se range dans `reprises/` sans rien écraser.
 
 ## L'espace de travail
 

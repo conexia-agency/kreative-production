@@ -26,6 +26,8 @@ process mesurable, en trois temps :
     python3 pipeline/banque.py ouvrir <ardoise>
     python3 pipeline/banque.py lue <ardoise> --planches AG1_1 AG1_2
     python3 pipeline/banque.py retenir <ardoise> --refs AG1-07 AG2-10 --du-client AG2-10
+    python3 pipeline/banque.py extraire <ardoise>
+    python3 pipeline/banque.py absorber <ardoise> --ref AG1-07 --vu "layout hero + claim haut + CTA bas"
     python3 pipeline/banque.py verifier <ardoise>
 
 **Ce que ce controle ne prouve pas, et il faut le savoir.** `lue` est une
@@ -128,7 +130,7 @@ def familles_pour(commande: Commande) -> Tuple[str, List[str], Optional[str]]:
     # Les deux champs dedies du formulaire d'abord. Ils portent la demande par
     # un curseur et un menu, donc ils ne contiennent JAMAIS les mots ci-dessus :
     # les chercher dans leur valeur ne pouvait rien trouver. Mesure du 19/09 sur
-    # client A, qui demandait 30 % d'ugly ads par le curseur et n'ouvrait
+    # le client A, qui demandait 30 % d'ugly ads par le curseur et n'ouvrait
     # aucune planche UG. Le champ se nomme « part_ugly_ads », sa valeur vaut
     # « 30 » : c'est le nom qui porte le mot, pas le contenu.
     motif = None
@@ -234,6 +236,7 @@ def ouvrir(commande: Commande) -> dict:
         "planches_lues": [],
         "references_retenues": [],
         "references_du_client": [],
+        "references_absorbees": {},
         "plancher_references": plancher,
     }
     _ecrire_etat(commande, etat)
@@ -354,6 +357,47 @@ def extraire(commande: Commande) -> Dict[str, str]:
     return sorties
 
 
+
+
+def absorber(commande: Commande, ref: str, vu: str) -> dict:
+    """Consigne qu'une reference extraite a ete ouverte et digeree.
+
+    `lue` sur les planches reste une declaration. Ici le fichier
+    session/references/<ref>.jpg DOIT exister (preuve d'extraire), et la
+    session doit poser UNE phrase sur ce qu'elle a vu : layout, traitement
+    fond, rapport texte/image. Sans cette phrase pour CHAQUE retenue,
+    verifier refuse le plan. Ce n'est toujours pas une preuve de lecture
+    (on peut inventer la phrase), mais ca force l'acte explicite apres
+    l'extrait, et ca nourrit le pack globalement.
+    """
+    etat = _lire_etat(commande)
+    if not etat:
+        raise RuntimeError("banque jamais ouverte : lancer ouvrir d'abord")
+    retenues = set(etat.get("references_retenues") or [])
+    if ref not in retenues:
+        raise ValueError(
+            f"reference {ref} hors des retenues "
+            f"({', '.join(sorted(retenues)) or 'aucune'}). "
+            f"retenir puis extraire avant d'absorber.")
+    fichier = commande.dossier / "session" / "references" / f"{ref}.jpg"
+    if not fichier.exists():
+        raise FileNotFoundError(
+            f"pas de fichier pleine resolution pour {ref} : "
+            f"lancer banque.py extraire d'abord ({fichier})")
+    phrase = (vu or "").strip()
+    if len(phrase) < 12:
+        raise ValueError(
+            "phrase --vu trop courte (min 12 caracteres) : "
+            "decrire layout / fond / rapport texte-image, pas juste l'id")
+    absorbees = dict(etat.get("references_absorbees") or {})
+    absorbees[ref] = phrase
+    etat["references_absorbees"] = absorbees
+    _ecrire_etat(commande, etat)
+    commande.tracer("banque_reference_absorbee", ref=ref,
+                    absorbees=len(absorbees))
+    return etat
+
+
 # ---------------------------------------------------------------------------
 # 3. Verifier : le gate que plan.py appelle
 # ---------------------------------------------------------------------------
@@ -396,6 +440,19 @@ def verifier(commande: Commande, refs_du_plan: Optional[List[str]] = None) -> Li
                           f"pleine resolution sur le disque : {', '.join(sans_fichier)}. "
                           f"Lancer banque.py extraire, puis OUVRIR chaque fichier de "
                           f"session/references/ un par un avant d'ecrire le plan.")
+
+        absorbees = etat.get("references_absorbees") or {}
+        if not isinstance(absorbees, dict):
+            absorbees = {}
+        non_absorbees = sorted(retenues - set(absorbees.keys()))
+        if non_absorbees:
+            fautes.append(
+                f"{len(non_absorbees)} reference(s) extraite(s) non absorbee(s) : "
+                f"{', '.join(non_absorbees)}. Ouvrir chaque "
+                f"session/references/<ref>.jpg (outil Read), puis "
+                f"banque.py absorber <ardoise> --ref <id> --vu \"phrase sur "
+                f"layout/fond/rapport texte-image\". Sans ca le pack ignore "
+                f"la banque.")
 
     du_client = set(etat.get("references_du_client") or [])
     reprises = sorted(retenues & du_client)
@@ -461,6 +518,12 @@ def main() -> int:
     p = sous.add_parser("extraire", help="une image par reference retenue, pleine resolution")
     p.add_argument("ardoise")
 
+    p = sous.add_parser("absorber", help="consigner la lecture d'une reference extraite")
+    p.add_argument("ardoise")
+    p.add_argument("--ref", required=True)
+    p.add_argument("--vu", required=True,
+                   help="une phrase : layout, fond, rapport texte/image")
+
     p = sous.add_parser("verifier", help="controler que le process a ete suivi")
     p.add_argument("ardoise")
 
@@ -474,6 +537,19 @@ def main() -> int:
             for ref, chemin in sorties.items():
                 print(f"  {ref}  {chemin}")
             print(f"{len(sorties)} référence(s) découpée(s), une créa par image : les ouvrir une par une.")
+            return 0
+
+        if args.action == "absorber":
+            etat = absorber(commande, args.ref, args.vu)
+            n = len(etat.get("references_absorbees") or {})
+            total = len(etat.get("references_retenues") or [])
+            print(f"Absorbee {args.ref} ({n}/{total}).")
+            reste = sorted(set(etat.get("references_retenues") or [])
+                           - set((etat.get("references_absorbees") or {}).keys()))
+            if reste:
+                print(f"  reste : {', '.join(reste)}")
+            else:
+                print("  toutes les retenues sont absorbees.")
             return 0
 
         if args.action == "ouvrir":

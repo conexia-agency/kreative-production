@@ -17,7 +17,10 @@ ne tournera pas entière.
 |---|---|---|
 | Python 3.9 ou plus | toute la chaîne | livré avec macOS, sinon python.org |
 | Playwright + Chromium | l'aspiration des sites clients | `pip3 install playwright && python3 -m playwright install chromium` |
-| tesseract + langues fra, eng | le gate lit le texte peint dans les images | `brew install tesseract tesseract-lang` |
+| Pillow | la découpe de relecture, les formats 4:5 et 9:16, l'audit | `pip3 install Pillow` |
+
+Aucun moteur de lecture de texte à installer : depuis le 21/09, la relecture
+des masters se fait par la session, au zoom (`loupe.py`, puis `relecture.py`).
 | Claude Code | la session qui pilote tout | https://claude.com/claude-code |
 
 ## 2. Le MCP Higgsfield

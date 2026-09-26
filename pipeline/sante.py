@@ -107,11 +107,11 @@ def controler() -> int:
         note(OK, "modules de la chaîne", f"{len(modules)} modules s'importent")
     try:
         importlib.import_module("audit")
-        note(OK, "audit OCR", "présent, les contrôles mécaniques tourneront")
+        note(OK, "audit", "présent, les cinq contrôles mécaniques tourneront")
     except ModuleNotFoundError:
-        note(OPTION, "audit OCR", "absent de ce paquet : la relecture des visuels se fait à l'œil par la session, comme la doc du paquet le prévoit.")
+        note(OPTION, "audit", "absent de ce paquet : la relecture des visuels se fait à l'œil par la session, comme la doc du paquet le prévoit.")
     except Exception as erreur:
-        note(MANQUE, "audit OCR", f"présent mais cassé : {type(erreur).__name__}: {erreur}")
+        note(MANQUE, "audit", f"présent mais cassé : {type(erreur).__name__}: {erreur}")
 
     # 4. L'espace de travail, écriture prouvée.
     try:
@@ -137,17 +137,19 @@ def controler() -> int:
     except Exception:
         note(MANQUE, "Pillow", "absent : pip install Pillow. Sans lui, ni déclinaison de formats ni audit.")
 
-    # 7. Les moteurs de lecture, tous deux optionnels : sans eux, la relecture
-    # des visuels se fait à l'œil par la session, ce que la doc du paquet
-    # prévoit. On dit ce qui est là, pas ce qui devrait.
-    import shutil as _shutil
-    if _shutil.which("tesseract"):
-        note(OK, "tesseract", "présent, l'audit lira les textes peints")
-    else:
-        note(OPTION, "tesseract", "absent : l'audit passera en relecture à l'œil. brew/apt install tesseract pour l'activer.")
-    vision = Path.home() / ".cache" / "kreative" / "ocr-vision"
-    if sys.platform == "darwin":
-        note(OK if vision.exists() else OPTION, "Apple Vision", "binaire compilé" if vision.exists() else "sera compilé au premier audit (macOS seulement)")
+    # 7. La relecture des visuels. Elle ne dépend plus d'aucun moteur installé
+    # depuis le 21/09 : `loupe.py` découpe, la session lit et juge,
+    # `relecture.py` consigne. Un poste sans Mac et sans tesseract fait donc
+    # exactement le même travail qu'un poste équipé, ce qui n'était pas vrai
+    # avant. Ce qui se vérifie ici, c'est que les deux modules répondent.
+    for module in ("loupe", "relecture"):
+        try:
+            __import__(module)
+            note(OK, f"{module}.py", "présent")
+        except Exception as erreur:
+            note(MANQUE, f"{module}.py",
+                 f"illisible : {type(erreur).__name__}: {erreur}. "
+                 f"Sans lui, aucune créa ne peut passer C1.")
 
     # 8. Le connecteur Higgsfield. La génération passe par lui et par rien
     # d'autre. Sa CONFIGURATION se vérifie d'ici ; son APPEL, seulement en

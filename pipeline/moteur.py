@@ -137,8 +137,8 @@ def preparer(commande: Commande, filtre: Optional[List[str]] = None,
         raise RuntimeError(
             "GÉNÉRATION REFUSÉE, banque de références : "
             + " · ".join(m.rstrip(".") for m in manquements)
-            + ". Reprendre banque.py ouvrir / lue / retenir / extraire, "
-              "puis relancer preparer.")
+            + ". Reprendre banque.py ouvrir / lue / retenir / extraire / "
+              "absorber (ou parcours.py suivant), puis relancer preparer.")
 
     jobs = []
     for crea in creas:
@@ -185,6 +185,13 @@ def preparer(commande: Commande, filtre: Optional[List[str]] = None,
             "écrit par le skill de Kreative et il fait foi.",
             "Joindre en référence les fichiers listés dans `references`, dans "
             "l'ordre où ils sont donnés : le prompt les appelle par leur rang.",
+            "Rendre pour CHAQUE créa, dans les résultats passés à `recolter` : "
+            "`job_id`, l'identifiant rendu par le connecteur, et "
+            "`references_jointes`, la liste des fichiers réellement passés en "
+            "référence à l'appel. Les deux sont obligatoires et `recolter` "
+            "refuse le master sans eux. Ce n'est pas de la paperasse : sans "
+            "cette trace, une photo client repeinte n'est attribuable ni au "
+            "modèle ni à la jointure, et le défaut se reproduit au pack suivant.",
             "Générer par le connecteur Higgsfield, jamais par la ligne de commande.",
             "Télécharger chaque image produite sur le disque avant de la ranger : "
             "les rendus Higgsfield disparaissent au bout de sept jours.",
@@ -231,15 +238,41 @@ def recolter(commande: Commande, resultats: List[dict],
              solde_apres: Optional[float] = None) -> dict:
     """Range les images générées et met les créas à jour.
 
-    `resultats` est une liste de `{crea, fichier, job_id}`. `fichier` est un
-    chemin sur le disque : la session a déjà téléchargé l'image. On ne se fie
-    jamais à une URL, parce que les rendus Higgsfield disparaissent au bout de
-    sept jours et qu'un master perdu rend la commande irreproductible.
+    `resultats` est une liste de `{crea, fichier, job_id, references_jointes}`.
+    `fichier` est un chemin sur le disque : la session a déjà téléchargé
+    l'image. On ne se fie jamais à une URL, parce que les rendus Higgsfield
+    disparaissent au bout de sept jours et qu'un master perdu rend la commande
+    irreproductible.
+
+    **`job_id` et `references_jointes` sont OBLIGATOIRES depuis le 21/09.**
+    Ils l'étaient déjà en intention : le lot porte la consigne « joindre en
+    référence les fichiers listés ». Mais c'était une phrase en prose, rien ne
+    la vérifiait, et `job_id` était facultatif. Résultat mesuré sur le pack
+    le client B du 18/09 : dix-huit masters rangés, `job_generation` à None sur les
+    dix-huit, et trois créas dont la photo du client est visiblement repeinte
+    alors que sa référence était sur le disque. Impossible de trancher entre
+    « référence jointe et ignorée par le modèle » et « référence jamais
+    envoyée », donc impossible de corriger. Une chaîne qui ne consigne pas ce
+    qu'elle envoie ne peut rien attribuer à ce qu'elle reçoit.
+
+    La parité est contrôlée : ce que la session déclare avoir joint doit être
+    exactement ce que le lot demandait. C'est la « parité stricte » du skill,
+    appliquée à l'appel au lieu d'être cochée dans le plan.
+
+    Limite à dire, la même que pour `banque.py lue` : une déclaration n'est pas
+    une preuve. Elle transforme une omission silencieuse en acte explicite, et
+    l'identifiant de job donne le seul recours réel, aller demander au moteur
+    ce qu'il a effectivement reçu.
 
     Une créa absente des résultats reste `briefee` : elle repassera au lot
     suivant. Une commande ne s'arrête pas sur une créa ratée.
     """
     lot = lot_en_attente(commande)
+    # Ce que le lot a demandé, par créa : la référence du contrôle de parité.
+    demandees: Dict[str, List[str]] = {
+        j["crea"]: list(j.get("references") or [])
+        for j in ((lot or {}).get("jobs") or [])
+    }
     dossier_masters = commande.dossier / "masters"
     dossier_masters.mkdir(parents=True, exist_ok=True)
 
@@ -260,15 +293,83 @@ def recolter(commande: Commande, resultats: List[dict],
             refuses.append({"crea": identifiant, "raison": "cette créa n'existe pas"})
             continue
 
+        job_id = (resultat.get("job_id") or "").strip()
+        if not job_id:
+            refuses.append({
+                "crea": identifiant,
+                "raison": "aucun identifiant de job. Sans lui, ce master n'est "
+                          "rattachable à aucun appel et un défaut ne sera jamais "
+                          "attribuable. Le connecteur le rend à la génération : "
+                          "le reporter dans le résultat, champ `job_id`."})
+            continue
+
+        attendues = demandees.get(identifiant)
+        if attendues is None:
+            attendues = list(crea.prompt.references or [])
+        jointes = resultat.get("references_jointes")
+        if attendues and jointes is None:
+            refuses.append({
+                "crea": identifiant,
+                "raison": f"{len(attendues)} référence(s) étaient à joindre et le "
+                          f"résultat ne déclare pas ce qui l'a été. Déclarer le "
+                          f"champ `references_jointes` : la liste des fichiers "
+                          f"réellement passés en référence à l'appel."})
+            continue
+
+        jointes = list(jointes or [])
+        if sorted(jointes) != sorted(attendues):
+            manquent = [r for r in attendues if r not in jointes]
+            en_trop = [r for r in jointes if r not in attendues]
+            detail = []
+            if manquent:
+                detail.append("jamais jointes : " + ", ".join(manquent))
+            if en_trop:
+                detail.append("jointes sans être demandées : " + ", ".join(en_trop))
+            refuses.append({
+                "crea": identifiant,
+                "raison": "parité rompue entre les références demandées et les "
+                          "références jointes. " + " · ".join(detail) +
+                          ". Le prompt les appelle par leur rang : une jointure "
+                          "partielle fait peindre au modèle ce qu'il n'a pas reçu."})
+            continue
+
         destination = dossier_masters / f"{identifiant}.png"
+
+        # Un master déjà sur le disque ne s'écrase pas en silence.
+        #
+        # Mesuré les 21 et 22/09 sur le client A : trois lots successifs ont
+        # réutilisé les identifiants c01 à c10, et quatre masters du premier
+        # pack ont été détruits, leurs verdicts de relecture remplacés. Rien
+        # n'a refusé, rien n'a prévenu, et le journal ne dit que
+        # « master_genere » comme pour une première génération.
+        #
+        # Régénérer est légitime, c'est même le cas courant : une créa refusée
+        # se reprend. Mais une reprise se DÉCLARE, avec `etat.py reprise-visuel`,
+        # qui archive l'ancien master et remet la créa à `briefee`. Une créa
+        # encore en `master_ok` qui reçoit un nouveau fichier n'est pas une
+        # reprise, c'est un écrasement.
+        if destination.exists() and crea.etat == "master_ok":
+            refuses.append({
+                "crea": identifiant,
+                "raison": f"un master existe déjà pour cette créa "
+                          f"({destination.name}) et elle est en état master_ok. "
+                          f"L'écraser détruirait le visuel précédent et son "
+                          f"verdict de relecture. Si c'est une reprise voulue : "
+                          f"python3 pipeline/etat.py reprise-visuel "
+                          f"{commande.donnees['ardoise']} --crea {identifiant}. "
+                          f"Si c'est une créa nouvelle, lui donner son propre "
+                          f"identifiant."})
+            continue
+
         if source.resolve() != destination.resolve():
             shutil.move(str(source), str(destination))
         crea.master = str(destination.relative_to(commande.dossier))
-        crea.job_generation = resultat.get("job_id")
+        crea.job_generation = job_id
+        crea.references_jointes = jointes
         crea.etat = "master_ok"
         commande.ecrire_crea(crea)
-        commande.tracer("master_genere", crea=identifiant, job=resultat.get("job_id"),
-                        modele=crea.prompt.modele)
+        commande.tracer("master_genere", crea=identifiant, job=job_id,
+                        modele=crea.prompt.modele, references_jointes=jointes)
         range_ok += 1
 
     # Le coût réel, mesuré sur l'écart de solde. Une seule famille de modèle par

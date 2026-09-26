@@ -179,6 +179,12 @@ def construire_dossier(commande: Commande, vers: Optional[Path] = None) -> dict:
     (racine / "LISEZ-MOI.txt").write_text(
         _lisez_moi(commande, creas, fichiers), encoding="utf-8")
 
+    # Le « Format de sortie » du skill de Kreative : stratégie, angles,
+    # créatives avec leurs prompts, garde-fous. Assemblé par sortie.py.
+    sortie = commande.dossier / "sortie-strategie.md"
+    if sortie.exists():
+        shutil.copy2(sortie, racine / "STRATEGIE-ET-PROMPTS.md")
+
     (racine / "livraison.json").write_text(json.dumps({
         "ardoise": ardoise,
         "marque": commande.donnees.get("marque"),

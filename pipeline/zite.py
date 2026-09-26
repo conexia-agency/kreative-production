@@ -113,7 +113,7 @@ CHAMPS_TEXTE: Dict[str, str] = {
     # Le style de créas et sa répartition chiffrée décident de la famille de la
     # banque de références : UGLY ADS ne s'ouvre QUE sur demande explicite du
     # client, et c'est ici qu'elle se lit. Ces trois champs se perdaient
-    # silencieusement (mesuré le 18/09 sur client C, qui demandait
+    # silencieusement (mesuré le 18/09 sur le client C, qui demandait
     # 60 % d'ugly ads sans que la stratégie puisse jamais le savoir).
     "quelstyledecreas": "style_creas",
     "adsclassiques": "part_ads_classiques",
@@ -283,8 +283,8 @@ def vers_brief(soumission: dict, pack: str) -> Tuple[dict, List[str]]:
     # Les questions « Avez-vous ... ? » sont des aiguillages du formulaire : elles
     # ouvrent ou ferment la question suivante et ne portent aucune information par
     # elles-mêmes. Elles en portent UNE, pourtant, et elle est précieuse : quand le
-    # client répond oui et ne fournit rien derrière. Mesuré le 18/09 sur client C,
-    #  qui déclare avoir une identité visuelle et ne joint aucun fichier :
+    # client répond oui et ne fournit rien derrière. Mesuré le 18/09 sur le client C,
+    # qui déclare avoir une identité visuelle et ne joint aucun fichier :
     # la stratégie a composé sans logo ni charte sans que rien ne le signale.
     annonces = {
         "avezvousunlogo": "logo",
@@ -450,7 +450,7 @@ def ouvrir_commande(soumission: dict, brief: dict) -> Path:
 
 # Deux soumissions de la même marque sur le même pack à moins de ce délai sont
 # le MÊME brief : un client qui revient le lendemain complète, il ne recommande
-# pas. client B l'a fait le 24 puis le 25 août, la première portant son logo et la
+# pas. le client B l'a fait le 24 puis le 25 août, la première portant son logo et la
 # seconde le brief complet. Au delà, c'est une nouvelle commande, et un humain
 # tranche. Un pack se livre en jours : trente est large et sans ambiguïté.
 FENETRE_COMPLEMENT_JOURS = 30

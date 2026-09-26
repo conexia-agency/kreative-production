@@ -29,6 +29,7 @@ import shutil
 import unicodedata
 import zipfile
 from pathlib import Path
+from typing import Optional
 
 DEPOT = Path(__file__).resolve().parent.parent
 
@@ -98,10 +99,34 @@ def purger_doublons_icloud(dossier: Path) -> int:
     return n
 
 
-def _copier_arbre(source: Path, cible: Path) -> int:
+def _suivis_par_git(source: Path) -> Optional[set]:
+    """Les fichiers versionnés sous `source`, ou None hors d'un dépôt git.
+
+    Un paquet nu ne contient que le système. Mesuré le 26/09 : `outils/`
+    portait trois scripts ponctuels d'une commande du client A, jamais versionnés,
+    dont un qui importait un module archivé. Copier le dossier entier les
+    aurait livrés à Kreative. Le dépôt git fait foi de ce qui est le système.
+    """
+    import subprocess
+    try:
+        sortie = subprocess.run(
+            ["git", "ls-files", "-z", "--", str(source.relative_to(DEPOT))],
+            cwd=DEPOT, capture_output=True, check=True).stdout
+    except (subprocess.CalledProcessError, FileNotFoundError, ValueError):
+        return None
+    return {DEPOT / p.decode("utf-8") for p in sortie.split(b"\0") if p}
+
+
+def _copier_arbre(source: Path, cible: Path, suivis_seulement: bool = False) -> int:
+    suivis = _suivis_par_git(source) if suivis_seulement else None
+    if suivis_seulement and suivis is None:
+        print(f"  attention : git indisponible, {source.name}/ copié sans filtre de versionnement")
     n = 0
     for element in sorted(source.rglob("*")):
         if not element.is_file():
+            continue
+        if suivis is not None and element not in suivis:
+            print(f"  écarté (non versionné) : {element.relative_to(DEPOT)}")
             continue
         if any(part in EXCLUS_NOMS for part in element.parts):
             continue
@@ -196,7 +221,7 @@ def empaqueter(vers: Path, faire_zip: bool) -> int:
     # répertoire d'archétypes et nos gabarits. La création vient du skill de
     # Kreative depuis le 18/09, et le texte est peint par le modèle.
     for dossier in ("pipeline", "outils"):
-        total += _copier_arbre(DEPOT / dossier, scripts / dossier)
+        total += _copier_arbre(DEPOT / dossier, scripts / dossier, suivis_seulement=True)
 
     purger_doublons_icloud(vers)
     fautes = _controler(vers)

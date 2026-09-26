@@ -215,19 +215,44 @@ retenue est donc la 700, ce qui reste nettement plus caractérisé qu'Inter.
 
 ## Le gate qualité
 
-Sept contrôles, aucun ne demande de jugement. Chacun se calcule et cite sa
-pièce. `python3 kreative.py audit <marque>` sort en code 1 si un contrôle
-bloque, ce qui permet de l'enchaîner dans un script sans lire la sortie.
+Cinq contrôles, aucun ne demande de jugement. Chacun se calcule et cite sa
+pièce. `python3 kreative.py audit <marque>` rapporte et rend 0 ; `--bloquant`
+rend 1 sur échec, pour l'enchaîner dans un script sans lire la sortie.
 
 | Contrôle | Ce qu'il mesure |
 |---|---|
-| C1 texte gravé | OCR du master : le prompt interdit tout texte, si l'OCR en lit, le modèle en a gravé |
+| C1 copy peinte | la créa rendue porte-t-elle le verdict de sa relecture, et ce verdict porte-t-il sur le master actuel |
 | C2 doublon visuel | empreinte perceptuelle 8x8, deux créas identiques comptent pour une |
-| C3 gabarit répété | évitable, donc bloquant, ou inévitable, donc chiffré |
-| C4 chiffre non sourcé | tout nombre du copy doit se retrouver dans le brief |
-| C5 marqueur | une créa portant `[A COMPLETER]` ne part pas |
-| C6 contraste | 4,5:1 minimum, texte sur fond et texte sur bouton |
-| C7 débordement | mesuré dans le navigateur au rendu, pas sur le PNG |
+| C3 chiffre sourcé | tout nombre du copy doit se retrouver dans le brief |
+| C4 marqueur | une créa portant `[A COMPLETER]` ne part pas |
+| C5 format du master | le carré 1:1 que le skill impose par défaut |
+
+Trois contrôles de l'ancienne chaîne composée en HTML ont été retirés le 18/09,
+gabarit répété, contraste de palette et débordement de texte : ils mesuraient un
+objet qui n'existe plus, le texte étant désormais peint par le modèle.
+
+**La lecture des visuels est sortie de l'audit le 21/09.** C1 comparait des
+listes de mots produites par un moteur de reconnaissance de caractères. Deux
+raisons de l'arrêter : le moteur se trompait (tesseract rendait vide une bulle
+noire sur violet, inventait des mots sur du texte incliné, et trois dérogations
+sur quatre venaient de lui), et surtout la question n'était pas la sienne. Les
+fautes réellement constatées sont une police peinte devant un nom, un mot de
+liaison peint dans une pastille, une étiquette de flacon réinventée hors
+catalogue : les voir demande de savoir ce qui aurait dû se trouver là. Lire un
+texte peint, c'est juger.
+
+Le travail se répartit donc ainsi, et cette répartition est le point :
+
+    python3 pipeline/loupe.py <marque>          # les pixels : 4 zones par master
+    python3 pipeline/relecture.py zones <marque>  # ce qu'il reste à ouvrir
+    python3 pipeline/relecture.py verdict <marque> c03 --etat ok --constat "..."
+    python3 pipeline/relecture.py exiger <marque> # le gate
+
+`loupe.py` fournit les pixels, la session ouvre chaque zone et juge,
+`relecture.py` consigne. Ce qui reste mécanique, et qui l'est entièrement : une
+créa rendue sans verdict ne passe pas, et un verdict cesse de valoir dès que son
+master est régénéré. Un verdict reste une déclaration, comme `banque.py lue` :
+le registre attrape l'étape sautée, pas le mensonge.
 
 **Ce que le gate a réellement attrapé** sur le pack Growth, et que la relecture
 avait laissé passer : du texte gravé par le modèle dans un master, « nein Sica

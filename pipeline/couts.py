@@ -60,7 +60,7 @@ class Tarif:
     `i2i` : le prix quand une image de référence est jointe, POUR LES MODÈLES
     QUI LE SURFACTURENT. Nano Banana Pro ne le fait pas : 2 crédits avec ou
     sans référence, mesuré le 17/09 sur le relevé ligne par ligne du lot
-    client B. L'ancienne valeur de 4, lue le 08/09 sur un simple écart de solde,
+    le client B. L'ancienne valeur de 4, lue le 08/09 sur un simple écart de solde,
     était fausse : le solde bougeait aussi pour des vidéos lancées en
     parallèle. Joindre un asset réel du client ne coûte donc rien de plus, et
     aucun texte de la chaîne ne doit en dissuader.

@@ -197,6 +197,35 @@ class Crea:
     prompt: Prompt = field(default_factory=Prompt)
     master: Optional[str] = None          # chemin relatif à la commande
     job_generation: Optional[str] = None  # identifiant du job Higgsfield
+    # Les références RÉELLEMENT jointes à l'appel, déclarées par la session qui
+    # génère. Distinct de `prompt.references`, qui dit ce qui était DEMANDÉ.
+    # Sans cet écart, un master repeint n'est pas attribuable : le pack du client B
+    # du 18/09 a dix-huit masters, zéro identifiant de job et aucune trace de
+    # jointure, donc trois repaints dont personne ne peut dire s'ils viennent
+    # d'une référence ignorée par le modèle ou d'une référence jamais envoyée.
+    references_jointes: List[str] = field(default_factory=list)
+    # Ce que le skill exige de DÉCIDER pour chaque créa, et que rien ne
+    # vérifiait jusqu'au 22/09/2026. Trois exigences, trois champs :
+    #
+    # `point_focal`  : « Un point focal unique. L'œil doit savoir où aller
+    #                  instantanément : un gros titre, OU un gros chiffre, OU
+    #                  un visuel héro, pas tout en même temps. »
+    # `fond`         : « Fais varier les fonds d'une créa à l'autre, y compris
+    #                  des versions claires ou inversées. Faire les 12 créas
+    #                  sur le même noir = quasi-clonage. »
+    # `tests`        : les trois tests que le skill impose sur CHAQUE créa,
+    #                  rareté, lecture muette, micro-question.
+    #
+    # Ce ne sont pas des métadonnées décoratives : les formuler oblige à
+    # trancher. Le lot du 19/09 n'avait ni point focal décidé ni variété de
+    # fonds, et les dix créas partageaient le même crème.
+    point_focal: str = ""
+    fond: str = ""
+    tests: Dict[str, str] = field(default_factory=dict)
+    # `structure` : l'identifiant de la référence de la banque dont la créa
+    # reprend la construction (layout, rapport texte/image, place du CTA).
+    # Exigé par plan.py depuis le 25/09/2026.
+    structure: str = ""
     rendus: Dict[str, str] = field(default_factory=dict)   # format -> chemin
     audit: Dict[str, object] = field(default_factory=dict)  # format -> verdict
     tours: int = 0                        # nombre de reprises subies
@@ -213,8 +242,13 @@ class Crea:
             etat=donnees.get("etat", "prevue"),
             copy=Copy(**donnees.get("copy", {})),
             prompt=Prompt(**donnees.get("prompt", {})),
+            point_focal=donnees.get("point_focal", ""),
+            fond=donnees.get("fond", ""),
+            tests=donnees.get("tests", {}) or {},
+            structure=donnees.get("structure", ""),
             master=donnees.get("master"),
             job_generation=donnees.get("job_generation"),
+            references_jointes=donnees.get("references_jointes", []),
             rendus=donnees.get("rendus", {}),
             audit=donnees.get("audit", {}),
             tours=donnees.get("tours", 0),

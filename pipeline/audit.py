@@ -14,9 +14,10 @@ skill de Kreative : ces trois contrôles jugeaient un objet qui n'existe plus.
 
 Les cinq qui restent :
 
-  C1 copy peinte      La copy écrite par le skill doit réellement se lire dans
-                      le master. L'OCR compare ce qui est lu à ce qui était
-                      demandé.
+  C1 copy peinte      Toute créa rendue porte le verdict de sa relecture. La
+                      lecture elle-même appartient à la session (`loupe.py`
+                      pour les pixels, `relecture.py` pour le registre) : lire
+                      un texte peint, c'est juger, et ce fichier ne juge pas.
   C2 doublon visuel   Deux créas visuellement identiques comptent pour une.
                       Le skill l'écrit dans sa propre liste de contrôle :
                       « aucune paire clonable ».
@@ -37,17 +38,16 @@ Usage :
     python3 audit.py --marque "Marque Exemple" --bloquant
     python3 audit.py --marque "Marque Exemple" --json
 
-Cible Python 3.9+. Dépendances : Pillow. Tesseract pour C1, optionnel.
+Cible Python 3.9+. Dépendances : Pillow. Plus aucun moteur de reconnaissance de
+caractères, ni tesseract ni Apple Vision : C1 lit le registre de `relecture.py`,
+ce qui rend le contrôle identique sur un Mac et sur le poste d'un client.
 """
 from __future__ import annotations
 
 import argparse
 import json
 import re
-import shutil
-import subprocess
 import sys
-import unicodedata
 from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -56,6 +56,10 @@ ICI = Path(__file__).resolve().parent
 sys.path.insert(0, str(ICI))
 
 from etat import Commande, Crea  # noqa: E402
+from relecture import (  # noqa: E402
+    etat_crea as etat_relecture,
+    lire_registre as lire_relecture,
+)
 
 SEUIL_SIMILARITE = 0.92    # au delà, deux créas sont le même visuel
 
@@ -83,191 +87,65 @@ class Constat:
 # C1 : la copy est-elle réellement peinte dans le master
 # ---------------------------------------------------------------------------
 
-def _tesseract_disponible() -> bool:
-    try:
-        subprocess.run(["tesseract", "--version"], capture_output=True, timeout=8)
-        return True
-    except Exception:
-        return False
-
-
-def _vision_disponible() -> Optional[str]:
-    """Le chemin de l'OCR Apple Vision, compilé au premier usage, sinon None.
-
-    Vision n'existe que sur macOS, et c'est un BONUS, jamais un prérequis : le
-    paquet doit tourner chez un client sans Mac, où tesseract et la relecture
-    en session font le travail. Mais là où Vision existe, il change tout,
-    mesuré le 19/09 sur trois créas : la bulle noire sur violet que tesseract
-    rendait vide, le manuscrit qu'il rendait en charabia (« caloul », « cnea »)
-    et la liste de noms où il inventait « SEAT », Vision les lit intégralement
-    et sans faute. Trois dérogations sur quatre venaient de tesseract, pas des
-    images.
-    """
-    if sys.platform != "darwin":
-        return None
-    binaire = Path.home() / ".cache" / "kreative" / "ocr-vision"
-    if binaire.exists():
-        return str(binaire)
-    source = None
-    for candidat in (ICI.parent / "outils" / "ocr-vision.swift",
-                     ICI / "ocr-vision.swift"):
-        if candidat.exists():
-            source = candidat
-            break
-    if source is None or not shutil.which("swiftc"):
-        return None
-    binaire.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        resultat = subprocess.run(
-            ["swiftc", "-O", str(source), "-o", str(binaire)],
-            capture_output=True, timeout=300)
-        return str(binaire) if resultat.returncode == 0 and binaire.exists() else None
-    except Exception:
-        return None
-
-
-def _normaliser(texte: str) -> List[str]:
-    """Les mots d'au moins quatre lettres, sans accent ni casse.
-
-    Quatre lettres, parce que l'OCR produit toujours des parasites d'une ou deux
-    lettres sur une photo. Sans accent, parce que tesseract confond régulièrement
-    é et e sur une typographie grasse, et qu'un rejet sur cette base serait faux.
-    """
-    plie = unicodedata.normalize("NFD", texte or "")
-    plie = "".join(c for c in plie if unicodedata.category(c) != "Mn").lower()
-    return re.findall(r"[a-z]{4,}", plie)
-
-
-# Seuils PROVISOIRES. Ils ne sortent d'aucune mesure calibrée : ils sont posés
-# larges exprès, pour attraper la faute grossière sans condamner une créa
-# correcte que l'OCR aurait mal lue. Un faux négatif constaté se traite par une
-# dérogation nominative, jamais en baissant le seuil.
-RAPPEL_MINIMUM = 0.5      # moitié de la copy absente = le modèle ne l'a pas rendue
-INTRUS_ALERTE = 3         # au delà, du texte non demandé apparaît
-
 
 def c1_copy_peinte(commande: Commande, crea: Crea) -> Optional[Constat]:
-    """La copy doit être PRÉSENTE et JUSTE dans l'image.
+    """Chaque créa rendue porte-t-elle le verdict de sa relecture ?
 
-    Deux défaillances distinctes, qui n'appellent pas la même réaction.
+    **Ce contrôle a changé de nature le 21/09, et c'est une correction, pas un
+    renoncement.** Il demandait auparavant à un programme de reconnaissance de
+    caractères si la copy était bien peinte, en comparant des listes de mots.
+    Deux raisons de l'abandonner, mesurées.
 
-    **Le rappel** : la part de la copy attendue qu'on retrouve dans l'image. Un
-    rappel bas veut dire que le modèle n'a pas rendu l'accroche, ou l'a rendue
-    illisible. C'est bloquant, la créa est à régénérer.
+    D'abord le moteur : tesseract rendait vide une bulle noire sur violet clair,
+    inventait « caloul » sur du manuscrit et « SEAT » sur une liste de noms
+    (19/09, masters du client B). Trois dérogations sur quatre venaient de lui, pas
+    des créas. Apple Vision lisait tout, mais seulement là où il y a un Mac.
 
-    **Les intrus** : des mots lus dans l'image qui ne sont dans aucun champ de
-    copy. C'est le faux texte que le skill désigne comme le tell IA numéro un.
-    Mais ce n'est qu'une ALERTE, jamais un échec, parce qu'un asset réel joint
-    en référence (une capture d'interface, un packaging) porte légitimement ses
-    propres mots. Trancher demanderait de savoir ce que contient l'asset, ce
-    qu'on ne sait pas faire ici. On montre les mots, un humain regarde.
+    Ensuite, et surtout, la question : les fautes réellement constatées ne sont
+    pas des écarts de mots. Une police peinte en clair devant un nom
+    (« DM Sans: »), un mot de liaison peint dans une pastille (« puis »), une
+    étiquette de flacon réinventée avec un format 80 ml absent du catalogue.
+    Aucun comparateur de chaînes ne voit ces trois là : les reconnaître demande
+    de savoir ce qui aurait dû se trouver là. Lire, ici, c'est juger, et ce
+    fichier dit lui-même en tête qu'aucun de ses contrôles ne juge.
+
+    Donc la lecture sort d'ici et revient à la session, avec `loupe.py` pour les
+    pixels et `relecture.py` pour le registre. Ce qui reste mécanique, et qui le
+    reste entièrement : une créa rendue sans verdict, ou dont le master a été
+    régénéré depuis son verdict, ne passe pas.
     """
     if not crea.master:
         return None
-    chemin = commande.dossier / crea.master
-    vision = _vision_disponible()
-    if not chemin.exists() or (vision is None and not _tesseract_disponible()):
-        return None
 
-    # Deux modes de segmentation, et on garde l'union. Le mode 11, texte
-    # épars, ne lisait RIEN sur les quatre masters du client B du 19/09, dont un
-    # chiffre de 900 px de haut, alors que le mode 3, page entière, lisait
-    # tout. Un seul mode produisait donc quatre faux échecs sur quatre créas
-    # correctes, et un gate qui se trompe à ce point apprend à être ignoré.
-    # Le chemin est RESOLU avant d'être passé à tesseract. Sur macOS, /tmp est
-    # un lien vers /private/tmp, et la bibliothèque d'image de tesseract ne le
-    # suit pas : elle répond « image file not found » sur un fichier que Python
-    # vient de lire. Quatre masters du client B ont ainsi été déclarés sans texte le
-    # 19/09, alors que l'OCR les lisait parfaitement par leur chemin réel.
-    reel = str(chemin.resolve())
-    # Les deux moteurs ne servent pas la même question. Le RAPPEL se mesure
-    # sur l'union des lectures : un mot est absent seulement si personne ne
-    # l'a lu. Les INTRUS se mesurent sur la lecture du meilleur moteur
-    # disponible : tesseract fabrique ses propres mots sur du manuscrit ou du
-    # texte incliné (« caloul », « SEAT », mesuré le 19/09), et les verser
-    # dans les intrus accusait des créas propres.
-    lus_vision: set = set()
-    lus_tesseract: set = set()
-    if vision:
-        try:
-            brut = subprocess.run([vision, reel], capture_output=True, timeout=90)
-            lus_vision = set(_normaliser(brut.stdout.decode("utf-8", "replace")))
-        except Exception:
-            pass
-    if _tesseract_disponible():
-        for segmentation in ("3", "11"):
-            try:
-                brut = subprocess.run(
-                    ["tesseract", reel, "-", "-l", "fra+eng", "--psm", segmentation],
-                    capture_output=True, timeout=90)
-                lus_tesseract |= set(_normaliser(brut.stdout.decode("utf-8", "replace")))
-            except Exception:
-                continue
-    lus = lus_vision | lus_tesseract
-    fiables = lus_vision if lus_vision else lus
-    attendus = set()
-    for champ in (crea.copy.accroche, crea.copy.sous_accroche,
-                  crea.copy.cta, crea.copy.badge):
-        attendus.update(_normaliser(champ))
+    etat = etat_relecture(commande, crea, lire_relecture(commande))
+    situation = etat["situation"]
 
-    if not attendus:
-        return Constat("C1 copy peinte", crea.identifiant, "ok",
-                       "aucune copy attendue, rien à vérifier")
-
-    trouves = attendus & lus
-    rappel = len(trouves) / len(attendus)
-
-    # Les intrus se mesurent contre le PROMPT ENTIER, pas contre la seule
-    # copy. Le prompt décrit aussi les habillages que le modèle peint à bon
-    # droit : le nom de la marque, les libellés d'un schéma, les étiquettes
-    # d'une courbe. Mesuré le 19/09 : comparer à la copy seule produisait
-    # dix-huit alertes dont « client B », « studio » et « fréquence », et le
-    # vrai faux texte se noyait dedans. Un mot lu qui n'est NI dans la copy
-    # NI dans le prompt reste un intrus : un mot dégradé comme « caloul » ou
-    # « qontc » n'est écrit nulle part, il ressort toujours.
-    autorises = attendus | set(_normaliser(crea.prompt.scene))
-    # Le nom de la marque est toujours légitime dans sa propre publicité,
-    # même quand le prompt pose le logo par référence sans écrire le mot.
-    autorises |= set(_normaliser(str(commande.donnees.get("marque") or "")))
-    autorises |= set(_normaliser(str(commande.donnees.get("ardoise") or "")))
-
-    bruts = fiables - autorises
-    # L'OCR fragmente les textes inclinés : « annonceurs » ressort en « anno »
-    # et « nceurs », « Voir nos » en « voirnos ». Un éclat n'est pas un intrus :
-    # tout mot lu qui est contenu dans un mot autorisé, ou qui contient un mot
-    # autorisé, est un débris de lecture, pas un texte inventé. « caloul » ou
-    # « qontc » ne sont ni l'un ni l'autre : ils restent détectés.
-    def _eclat(mot: str) -> bool:
-        return any(mot in a or a in mot for a in autorises)
-
-    intrus = sorted(m for m in bruts if not _eclat(m))
-
-    if not lus:
+    if situation == "a_relire":
         return Constat(
             "C1 copy peinte", crea.identifiant, "echec",
-            "aucun texte lu dans le master alors que la copy devait y être peinte. "
-            "Le modèle a ignoré le texte : la créa est à régénérer.",
-            preuve=crea.copy.accroche[:80])
+            "master rendu mais jamais relu. Ouvrir ses zones de loupe une par "
+            "une, lire chaque texte peint, puis consigner le verdict.",
+            preuve=f"python3 pipeline/relecture.py zones "
+                   f"{commande.donnees.get('ardoise') or commande.dossier.name} "
+                   f"--creas {crea.identifiant}")
 
-    if rappel < RAPPEL_MINIMUM:
-        manquants = sorted(attendus - trouves)
+    if situation == "perimee":
         return Constat(
             "C1 copy peinte", crea.identifiant, "echec",
-            f"seulement {len(trouves)} mot(s) de la copy sur {len(attendus)} "
-            f"retrouvés dans l'image ({rappel:.0%}). Le modèle n'a pas rendu le "
-            f"texte demandé : la créa est à régénérer.",
-            preuve="absents : " + " ".join(manquants[:8]))
+            f"verdict périmé : le master a été régénéré depuis la relecture du "
+            f"{etat.get('date')}. L'ancien verdict parle d'une image qui "
+            f"n'existe plus, la créa est à relire.",
+            preuve=str(etat.get("constat") or "")[:120])
 
-    if len(intrus) > INTRUS_ALERTE:
+    if etat.get("verdict") == "refus":
         return Constat(
-            "C1 copy peinte", crea.identifiant, "alerte",
-            f"copy retrouvée à {rappel:.0%}, mais {len(intrus)} mot(s) lus dans "
-            f"l'image ne viennent d'aucun champ de copy. Soit ils appartiennent à "
-            f"un asset réel joint, soit le modèle a inventé du texte : à regarder.",
-            preuve=" ".join(intrus[:8]))
+            "C1 copy peinte", crea.identifiant, "echec",
+            f"refusée à la relecture du {etat.get('date')} : {etat.get('constat')}",
+            preuve=str(crea.master))
 
-    return Constat("C1 copy peinte", crea.identifiant, "ok",
-                   f"copy retrouvée à {rappel:.0%}, aucun texte étranger notable")
+    return Constat(
+        "C1 copy peinte", crea.identifiant, "ok",
+        f"relue et jugée conforme le {etat.get('date')} : {etat.get('constat')}")
 
 
 # ---------------------------------------------------------------------------

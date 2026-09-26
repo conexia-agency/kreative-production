@@ -11,7 +11,6 @@ manque et le remède.
 | Python 3.9 ou plus | toute la chaîne | livré avec macOS, sinon python.org |
 | Pillow | déclinaison des formats, découpe des références | `pip3 install Pillow` |
 | Playwright + Chromium | l'aspiration des sites clients | `pip3 install playwright && python3 -m playwright install chromium` |
-| tesseract + langues fra, eng | l'audit lit le texte peint (optionnel : sans lui, relecture à l'oeil) | `brew install tesseract tesseract-lang` |
 | Claude Code | la session qui pilote tout | https://claude.com/claude-code |
 
 ## 2. Récupérer le code

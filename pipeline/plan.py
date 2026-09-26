@@ -45,10 +45,43 @@ SCHEMA = "kreative-plan/1"
 # Le caractère s'écrit par son code : ce fichier ne doit en contenir aucun.
 TIRET_CADRATIN = chr(0x2014)
 
+# Vocabulaire de formats visuels du skill, section « Le prompt de génération ».
+# La liste n'est pas fermée, elle sert à détecter qu'UN format est nommé, pas à
+# imposer lequel : le skill dit explicitement que le choix est ouvert.
+_FORMATS_VISUELS = (
+    "photographie", "photographiee", "photographie de", "nature morte",
+    "macrophotographie", "macro", "infographie", "portrait", "split-screen",
+    "split screen", "packshot", "illustration", "collage", "rendu 3d",
+    "mise en scene", "capture", "format emprunte", "note manuscrite",
+    "ticket", "affiche", "plan large", "plan moyen", "gros plan",
+    "vue de dessus", "a plat", "flat lay", "diptyque", "sequence",
+)
+
+# Skill, « Performance Meta & hiérarchie de layout » : trois tests à passer
+# sur CHAQUE créa. Les nommer oblige à les passer ; une case cochée, non.
+_TESTS = ("rarete", "lecture_muette", "micro_question")
+_TEST_MINIMUM = 25
+
+# Formule anti-régénération, skill « Gestion des assets ». On accepte les
+# formulations équivalentes, pas seulement la phrase canonique : ce qui compte
+# est que l'interdiction de recréer soit présente.
+_ANTI_REGENERATION = (
+    "ne le recree pas", "ne la recree pas", "ne recree pas",
+    "ne reinvente", "sans le recreer", "exactement ce flacon",
+    "exactement ce produit", "utilise exactement",
+)
+
+
 # Skill de Kreative, section « Règles du prompt » : « chaque prompt se termine,
 # en toute dernière phrase, par ce texte exact ». On ne le paraphrase pas, on le
 # recopie, et on vérifie qu'il est là.
 PHRASE_DE_FIN = "Utilise la meilleure qualité de Nano Banana Pro en restant gratuit."
+
+
+def _plier_texte(texte: str) -> str:
+    """Sans accents, en minuscules : pour comparer des libelles de fond."""
+    n = unicodedata.normalize("NFD", texte or "")
+    return "".join(c for c in n if unicodedata.category(c) != "Mn").lower().strip()
 
 
 def _sans_phrase_de_fin(prompt: str) -> str:
@@ -379,6 +412,145 @@ def charger_plan(fichier: Path, commande: Commande) -> dict:
 # 3. Importer le plan produit par la session
 # ---------------------------------------------------------------------------
 
+# Skill, « Packs » : starter 3 angles, growth 6, scale 12, et « 2 créas par
+# angle est le plancher : en dessous, on ne distingue plus "l'angle ne marche
+# pas" de "cette exécution ne marche pas" ».
+ANGLES_PAR_PACK = {"starter": 3, "growth": 6, "scale": 12}
+CREAS_PAR_ANGLE_MINIMUM = 2
+
+# Skill, « Longueur de la copy » : titre visé sous dix mots, sous-titre d'une
+# douzaine de mots au plus. Il précise que le dosage est un curseur et non un
+# plafond : ce sont des alertes, pas des refus.
+MOTS_TITRE_MAXIMUM = 10
+MOTS_SOUS_TITRE_MAXIMUM = 12
+
+# Skill, checklist : « police exacte relevée sur le site et identique sur TOUS
+# les prompts ». Les noms que le contrôle sait reconnaître dans un prompt.
+POLICES_CONNUES = (
+    "poppins", "helvetica", "arial", "inter", "georgia", "roboto", "dm sans",
+    "glacial indifference", "ibm plex", "montserrat", "lato", "open sans",
+    "raleway", "oswald", "nunito", "manrope", "space grotesk", "playfair",
+    "futura", "gotham", "proxima")
+
+# Skill, « Récupération et livraison des assets » : numérotés globalement
+# (« PJ01-logo.png »), rangés dans assets/, résolution vérifiée.
+NOM_ASSET = re.compile(r"^assets/PJ\d{2}-[^/]+$")
+COTE_ASSET_MINIMUM = 600
+
+
+def _plier_texte(texte: str) -> str:
+    n = unicodedata.normalize("NFD", texte or "")
+    return "".join(c for c in n if unicodedata.category(c) != "Mn").lower()
+
+
+def _polices_nommees(texte: str) -> set:
+    """Les polices connues citées en mots entiers : « inter » n'est pas « interface »."""
+    plie = _plier_texte(texte)
+    return {p for p in POLICES_CONNUES
+            if re.search(rf"(?<![a-z]){re.escape(p)}(?![a-z])", plie)}
+
+
+def _polices_de_reference(commande: Commande) -> set:
+    """Les polices que le brief impose et que le site porte réellement."""
+    trouvees = set()
+    reponses = ((commande.donnees.get("brief") or {}).get("reponses") or {})
+    sources = [str(reponses.get("polices") or "")]
+    charte = commande.dossier / "marque" / "charte-site.json"
+    if charte.exists():
+        try:
+            polices = json.loads(charte.read_text(encoding="utf-8")).get("polices") or {}
+            sources += [str(v) for v in polices.values()]
+        except (OSError, ValueError):
+            pass
+    return _polices_nommees(" ".join(sources))
+
+
+def _controles_du_pack(commande: Commande, recevables: List[dict],
+                       refus: List[str], alertes: List[str]) -> List[dict]:
+    """Les règles du skill qui portent sur le pack entier, pas sur une créa."""
+    # 1. Les assets : numérotation globale et résolution.
+    gardees = []
+    for c in recevables:
+        mal_nommes = [a for a in c["assets"] if not NOM_ASSET.match(a)]
+        if mal_nommes:
+            refus.append(f"{c['id']} : asset hors convention du skill, "
+                         f"{', '.join(mal_nommes)}. Il se range dans assets/ sous un "
+                         f"numéro global : assets/PJ01-logo.png.")
+            continue
+        gardees.append(c)
+    recevables = gardees
+    try:
+        from PIL import Image
+        vus = set()
+        for c in recevables:
+            for a in c["assets"]:
+                if a in vus:
+                    continue
+                vus.add(a)
+                with Image.open(commande.dossier / a) as image:
+                    largeur, hauteur = image.size
+                if min(largeur, hauteur) < COTE_ASSET_MINIMUM:
+                    alertes.append(f"{a} fait {largeur}x{hauteur} : trop petit pour "
+                                   f"une créa, chercher une version haute définition "
+                                   f"sur le site, sinon le signaler.")
+    except ImportError:
+        alertes.append("Pillow absent : résolution des assets non vérifiée.")
+
+    # 2. Deux créas par angle au moins, sur l'état final du pack : les créas
+    #    déjà planifiées comptent, celles du plan les remplacent.
+    angle_de = {x.identifiant: (x.angle or "").strip()
+                for x in commande.creas() if (x.prompt.scene or "").strip()}
+    for c in recevables:
+        angle_de[c["id"]] = c["angle"].strip()
+    effectifs: Dict[str, int] = {}
+    for angle in angle_de.values():
+        effectifs[angle] = effectifs.get(angle, 0) + 1
+    gardees = []
+    for c in recevables:
+        angle = c["angle"].strip()
+        if not angle:
+            refus.append(f"{c['id']} : aucun angle nommé. Le skill nomme chaque "
+                         f"angle et le justifie en une ligne.")
+            continue
+        if effectifs[angle] < CREAS_PAR_ANGLE_MINIMUM:
+            refus.append(f"{c['id']} : l'angle « {angle} » n'a que {effectifs[angle]} "
+                         f"créa. Le skill en veut {CREAS_PAR_ANGLE_MINIMUM} au moins "
+                         f"par angle, d'exécution différente.")
+            continue
+        gardees.append(c)
+    recevables = gardees
+    attendus = ANGLES_PAR_PACK.get(commande.donnees.get("pack") or "")
+    nb_angles = len([a for a in effectifs if a])
+    if recevables and attendus and nb_angles != attendus:
+        alertes.append(f"{nb_angles} angle(s) pour {attendus} au pack "
+                       f"{commande.donnees.get('pack')}")
+
+    # 3. La longueur de la copy.
+    for c in recevables:
+        titre = len(c["accroche"].split())
+        sous = len(c["sous_accroche"].split())
+        if titre > MOTS_TITRE_MAXIMUM:
+            alertes.append(f"{c['id']} : titre de {titre} mots, le skill vise moins "
+                           f"de {MOTS_TITRE_MAXIMUM}. Justifié par la mécanique ?")
+        if sous > MOTS_SOUS_TITRE_MAXIMUM:
+            alertes.append(f"{c['id']} : sous-titre de {sous} mots, le skill en veut "
+                           f"une douzaine au plus. Justifié par la mécanique ?")
+
+    # 4. La même police partout.
+    reference = _polices_de_reference(commande)
+    if reference:
+        for c in recevables:
+            nommees = _polices_nommees(c["prompt"])
+            etrangeres = nommees - reference
+            if etrangeres:
+                alertes.append(f"{c['id']} : police hors charte nommée, "
+                               f"{', '.join(sorted(etrangeres))}.")
+            if not nommees & reference:
+                alertes.append(f"{c['id']} : aucune police de la charte nommée "
+                               f"({', '.join(sorted(reference))}).")
+    return recevables
+
+
 def controler(plan: dict, commande: Commande) -> Tuple[List[dict], List[str], List[str]]:
     """Sépare les créas recevables des refus. Rend (creas, refus, alertes).
 
@@ -392,6 +564,11 @@ def controler(plan: dict, commande: Commande) -> Tuple[List[dict], List[str], Li
 
     connus = {c.identifiant for c in commande.creas()}
     vus: Dict[str, int] = {}
+
+    # Les références que la session a réellement absorbées : seules elles
+    # peuvent servir de structure source à une créa.
+    import banque as module_banque
+    absorbees = set((module_banque._lire_etat(commande).get("references_absorbees") or {}).keys())
 
     for rang, entree in enumerate(plan.get("creas") or [], start=1):
         identifiant = str(entree.get("id") or entree.get("crea") or "").strip()
@@ -443,6 +620,94 @@ def controler(plan: dict, commande: Commande) -> Tuple[List[dict], List[str], Li
             refus.append(f"{etiquette} : tiret cadratin dans le prompt, interdit par le skill")
             continue
 
+        # Trois exigences du skill que rien ne vérifiait, ajoutées le 22/09/2026
+        # après une journée d'erreurs qui toutes étaient écrites dans le skill.
+        # On compare sans accents : un prompt peut légitimement être rédigé en
+        # ASCII, seule la copy à peindre porte ses accents.
+        def _plier(texte: str) -> str:
+            n = unicodedata.normalize("NFD", texte)
+            return "".join(c for c in n if unicodedata.category(c) != "Mn").lower()
+
+        # L'ouverture et le format visuel se jugent en tete de prompt, la ou le
+        # skill les impose. La formule anti-regeneration, elle, vit avec le bloc
+        # des assets, donc en fin : la chercher dans l'entete seule la manque.
+        entete = _plier(prompt[:600])
+        plie = _plier(prompt)
+
+        # 1. « Type + format, en tout premier. » Le skill ouvre là-dessus, et
+        #    c'est l'oubli qui fait générer un mauvais ratio.
+        if "format carre 1:1" not in entete and "format carre 1 :1" not in entete:
+            refus.append(
+                f"{etiquette} : le prompt n'ouvre pas sur le format. Le skill "
+                f"l'impose en tout premier, « Creative publicitaire statique, "
+                f"format carre 1:1. », et c'est cet oubli qui fait sortir un "
+                f"mauvais ratio.")
+            continue
+
+        # 2. « Tu NOMMES ce format dans le prompt. » Mesuré les 19 et 20/09 :
+        #    les prompts citaient la référence de la banque au lieu de nommer
+        #    un format visuel, ce qui a produit des décalques au lieu de créas.
+        if not any(mot in entete for mot in _FORMATS_VISUELS):
+            refus.append(
+                f"{etiquette} : aucun format visuel nommé. Le skill demande de "
+                f"nommer le format qui sert CETTE créa, librement choisi : "
+                f"photographie, nature morte, macrophotographie, infographie, "
+                f"portrait, split-screen, format emprunte au reel, rendu 3D, "
+                f"collage, illustration... Citer une référence de la banque a "
+                f"la place donne un décalque.")
+            continue
+
+        # 3. « Formule anti-régénération à coller dans chaque prompt qui
+        #    utilise un asset réel. » Sans elle, le modèle réinvente le
+        #    produit : trois volumes différents peints sur un flacon qui n'en
+        #    a qu'un, les 21 et 22/09.
+        assets_declares = entree.get("assets") or entree.get("references") or []
+        if assets_declares and not any(f in plie for f in _ANTI_REGENERATION):
+            refus.append(
+                f"{etiquette} : {len(assets_declares)} asset(s) joint(s) mais "
+                f"aucune formule anti-regeneration dans le prompt. Sans elle le "
+                f"modele recree le produit au lieu de l'utiliser. Le skill "
+                f"donne la formule : « ne le recree pas, ne reinvente aucun "
+                f"detail, aucun objet ni aucun texte ».")
+            continue
+
+        # 4. Le point focal unique, le fond, et les trois tests. Le skill les
+        #    impose sur CHAQUE créa ; rien ne les vérifiait. Le pack du 19/09
+        #    n'avait aucun point focal décidé et ses dix créas partageaient le
+        #    même fond crème, ce que le skill appelle du quasi-clonage.
+        manques = []
+        # La structure source. Dit par l'équipe le 25/09 sur la page blanche du client A :
+        # « il invente les structures, il met du texte, une image au hasard
+        # qui n'a aucun rapport, et il met le CTA au pif ». La banque est une
+        # collection de structures gagnantes, et le skill fait reprendre leur
+        # layout, leur rapport texte/image et le placement du CTA. Mesuré sur
+        # ce lot : les quatre créas sans structure source étaient les quatre
+        # rejetées. Chaque créa nomme désormais la référence absorbée dont
+        # elle reprend la construction. Le contenu reste celui du client.
+        structure = str(entree.get("structure") or "").strip().upper()
+        if not structure:
+            manques.append("structure, l'identifiant de la reference dont la crea "
+                           "reprend la construction (ex. EC1-07)")
+        elif structure not in absorbees:
+            manques.append(f"structure {structure}, qui n'est pas une reference "
+                           f"absorbee de cette commande ({', '.join(sorted(absorbees)) or 'aucune'})")
+        if len((entree.get("point_focal") or "").strip()) < 12:
+            manques.append("point_focal, ce qui domine le cadre en une phrase")
+        if len((entree.get("fond") or "").strip()) < 6:
+            manques.append("fond, son libelle court, clair ou sombre")
+        tests = entree.get("tests") or {}
+        for nom in _TESTS:
+            if len(str(tests.get(nom, "")).strip()) < _TEST_MINIMUM:
+                manques.append(f"tests.{nom}, au moins {_TEST_MINIMUM} caracteres")
+        if manques:
+            refus.append(
+                f"{etiquette} : le skill impose de decider ces points sur CHAQUE "
+                f"crea, ils manquent ou sont trop courts : "
+                f"{' ; '.join(manques)}. Un point focal unique, un fond qui "
+                f"varie d'une crea a l'autre, et les trois tests rarete, "
+                f"lecture muette, micro-question.")
+            continue
+
         # La copy déclarée doit être DANS le prompt. Le texte est peint par le
         # modèle : une copy qui n'apparaît pas dans le prompt ne sera jamais
         # dans l'image, et l'audit la comptera absente à raison. C'est la
@@ -454,8 +719,8 @@ def controler(plan: dict, commande: Commande) -> Tuple[List[dict], List[str], Li
         import unicodedata as _ud
 
         def _mots(texte: str) -> set:
-            plie = _ud.normalize("NFD", texte or "")
-            plie = "".join(c for c in plie if _ud.category(c) != "Mn").lower()
+            plie = unicodedata.normalize("NFD", texte or "")
+            plie = "".join(c for c in plie if unicodedata.category(c) != "Mn").lower()
             return set(re.findall(r"[a-z]{4,}", plie))
 
         copy_hors_prompt = sorted(
@@ -523,7 +788,14 @@ def controler(plan: dict, commande: Commande) -> Tuple[List[dict], List[str], Li
             "prompt": prompt,
             "modele": str(entree.get("modele") or MODELE_PAR_DEFAUT),
             "assets": assets,
+            "point_focal": str(entree.get("point_focal") or "").strip(),
+            "structure": str(entree.get("structure") or "").strip().upper(),
+            "fond": str(entree.get("fond") or "").strip(),
+            "tests": {k: str(v).strip()
+                      for k, v in (entree.get("tests") or {}).items()},
         })
+
+    recevables = _controles_du_pack(commande, recevables, refus, alertes)
 
     attendues = commande.donnees.get("quantite_generee") or 0
     if recevables and len(recevables) != attendues:
@@ -563,11 +835,59 @@ def importer(ardoise: str, fichier: Path) -> dict:
 
     citees = module_banque.references_citees(plan.get("_texte_brut") or "")
     manquements = module_banque.verifier(commande, citees or None)
+
+    # Le matériel du CLIENT, au même rang que la banque. Le 21/09 sur le client A :
+    # la charte officielle, le registre visuel réel de la marque et une créa
+    # de septembre portant déjà l'accroche du jour dormaient dans la commande,
+    # jamais ouverts, et le plan s'est écrit contre eux sans le savoir.
+    import dossier as module_dossier
+
+    manquements += module_dossier.verifier(commande)
+
+    # La bibliothèque publicitaire Meta, avant le PREMIER plan. Le skill la
+    # veut tentée à chaque commande ; le 25/09 sur le client A elle ne l'a pas été,
+    # et rien ne l'a vu. Un échec motivé est recevable. Une commande déjà
+    # planifiée (une reprise) n'est pas bloquée après coup.
+    if not any((c.prompt.scene or "").strip() for c in commande.creas()):
+        import metaads as module_metaads
+        manquements += module_metaads.verifier(commande)
+        import outillage as module_outillage
+        manquements += module_outillage.verifier(commande)
+
+    # La règle zéro, au même rang que les deux précédentes et pour la même
+    # raison. Le CLAUDE.md du dépôt la nomme « la règle qui rend toutes les
+    # autres superflues » : lire le skill EN ENTIER, à chaque commande, avant
+    # d'écrire une ligne de stratégie ou de prompt. Elle n'était tenue par
+    # rien. Le 22/09, le skill a été lu une fois au quatrième lot de la
+    # journée, et cinq lots de plus ont suivi sans y retourner : le format
+    # visuel n'était nommé nulle part, la synthèse stratégique n'existait pas,
+    # et un scrim dégradé a été réinventé alors qu'il y figure depuis toujours.
+    import skill as module_skill
+
+    manquements += module_skill.verifier(commande)
+
     # Un manquement de banque invalide le PLAN ENTIER, pas une créa : la
     # sélection de références nourrit le pack globalement, le skill le dit
     # lui-même. On ne range donc rien du tout, plutôt que de laisser passer
     # dix-sept créas construites sans avoir regardé les références.
     refus_plan = [f"banque de références : {m}" for m in manquements]
+
+    # La variété des fonds, sur l'ensemble du lot. Le skill : « Une DA
+    # dominante n'oblige PAS à faire tout le pack sur ce même fond. Faire les
+    # 12 créas sur le même noir = quasi-clonage. » Mesuré le 19/09 : dix créas
+    # sur dix sur le même crème. On ne juge pas le goût, on compte.
+    fonds = [_plier_texte(c.get("fond") or "") for c in recevables]
+    fonds = [f for f in fonds if f]
+    if len(fonds) >= 3:
+        from collections import Counter
+        commun, combien = Counter(fonds).most_common(1)[0]
+        if combien > len(fonds) * 0.6:
+            refus_plan.append(
+                f"variete des fonds : {combien} crea(s) sur {len(fonds)} "
+                f"partagent le meme fond, « {commun} ». Le skill appelle ca du "
+                f"quasi-clonage et demande de varier les fonds d'une crea a "
+                f"l'autre, versions claires ou inversees comprises.")
+
 
     # Un asset que le skill a nommé mais que la chaîne n'a pas trouvé sur le
     # disque. Ce n'est pas un refus : le skill peut nommer un asset en langage
@@ -607,6 +927,14 @@ def importer(ardoise: str, fichier: Path) -> dict:
         crea.prompt.scene = entree["prompt"]
         crea.prompt.modele = entree["modele"]
         crea.prompt.references = entree["assets"]
+        # Les trois décisions que le skill impose par créa. Rangées sur la
+        # fiche, elles survivent à la session qui les a prises : la page de
+        # suivi peut les montrer, et une reprise sait sur quoi elle revient.
+        crea.point_focal = str(entree.get("point_focal") or "").strip()
+        crea.fond = str(entree.get("fond") or "").strip()
+        crea.tests = {k: str(v).strip()
+                      for k, v in (entree.get("tests") or {}).items()}
+        crea.structure = str(entree.get("structure") or "").strip().upper()
         if prompt_change or not crea.master:
             crea.master = None
             crea.job_generation = None
@@ -658,7 +986,9 @@ def verifier(ardoise: str) -> List[str]:
         {"id": c.identifiant, "angle": c.angle, "accroche": c.copy.accroche,
          "sous_accroche": c.copy.sous_accroche, "cta": c.copy.cta,
          "badge": c.copy.badge, "prompt": c.prompt.scene,
-         "modele": c.prompt.modele, "assets": c.prompt.references}
+         "modele": c.prompt.modele, "assets": c.prompt.references,
+         "point_focal": c.point_focal, "fond": c.fond, "tests": c.tests,
+         "structure": c.structure}
         for c in commande.creas() if c.prompt.scene
     ]}
     _, refus, alertes = controler(plan, commande)

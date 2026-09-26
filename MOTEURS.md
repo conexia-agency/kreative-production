@@ -114,7 +114,7 @@ L'inverse exact de Nano Banana Pro.**
 
 ## Piege majeur des formats MS Image : ils remplissent les vides en inventant
 
-Constate le 2026-09-09 sur client B, deux formats, deux inventions differentes.
+Constate le 2026-09-09 sur le client B, deux formats, deux inventions differentes.
 
 - **Then vs Now** a fabrique les dates « 12 MAI » et « APRES 27 MAI », que personne n'avait
   demandees, et a grave au mur du bureau une enseigne au nom du client, inventée de toutes

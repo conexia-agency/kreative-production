@@ -20,7 +20,7 @@ par Claude Code à l'ouverture du dépôt.
 - **La génération passe par le connecteur MCP Higgsfield, uniquement.**
   Jamais la CLI, jamais une API directe.
 - **Les étapes ne peuvent pas être sautées.** La banque de références se lit
-  sous registre (`pipeline/banque.py` : ouvrir, lue, retenir, extraire), la
+  sous registre (`pipeline/banque.py` : ouvrir, lue, retenir, extraire, absorber ; ordre via `pipeline/parcours.py suivant`), la
   sortie du skill passe par `pipeline/plan.py importer` qui fait tourner les
   gates, et `pipeline/moteur.py preparer` refuse tout plan qui n'est pas
   passé par là. Chaque refus affiche le remède.
